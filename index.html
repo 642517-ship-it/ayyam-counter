@@ -66,6 +66,9 @@ header{display:flex;align-items:center;justify-content:space-between;gap:12px;fl
 .panel{background:#fff;border:1px solid var(--line);border-radius:var(--radius);padding:16px;margin-bottom:18px}
 .panel h3{margin:0 0 12px;font-size:16px;font-weight:600}
 .frow{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px}
+.types{display:flex;gap:8px;flex-wrap:wrap}
+.tbtn{flex:1;min-width:150px;font-size:14px}
+.tbtn.on{background:var(--purple-l);border-color:var(--purple);color:var(--purple-d);font-weight:600}
 .colors{display:flex;gap:8px;flex-wrap:wrap;margin-top:6px}
 .sw{width:30px;height:30px;border-radius:50%;border:2px solid transparent;cursor:pointer}
 .sw.on{border-color:var(--txt);transform:scale(1.1)}
@@ -124,14 +127,19 @@ header{display:flex;align-items:center;justify-content:space-between;gap:12px;fl
   <div class="stats">
     <div class="stat"><b id="stActive">0</b><span>عدّادات شغّالة</span></div>
     <div class="stat"><b id="stMax">—</b><span>الأطول</span></div>
+    <div class="stat"><b id="stNext">—</b><span>أقرب هدف</span></div>
     <div class="stat"><b id="stArch">0</b><span>مؤرشفة</span></div>
   </div>
 
   <div class="panel hide" id="addPanel">
     <h3>عدّاد جديد</h3>
-    <div class="frow">
+    <div class="types" id="nTypes">
+      <button class="tbtn on" data-t="up">↑ تصاعدي — منذ تاريخ</button>
+      <button class="tbtn" data-t="down">↓ تنازلي — حتى تاريخ</button>
+    </div>
+    <div class="frow" style="margin-top:12px">
       <div><label>الموضوع</label><input type="text" id="nTitle" placeholder="مثال: وضعت الحمامة بيضة"></div>
-      <div><label>تاريخ البداية</label><input type="date" id="nDate"></div>
+      <div><label id="nDateLbl">تاريخ البداية</label><input type="date" id="nDate"></div>
     </div>
     <label style="margin-top:12px">اللون</label>
     <div class="colors" id="nColors"></div>
@@ -174,12 +182,13 @@ const db = getFirestore(app);
 const COLORS = ['purple','teal','coral','blue','pink','amber','green'];
 const LS = 'ayyam_counters_v1';
 let counters = [];
-let uid = null, unsub = null, signup = false, newColor = 'purple', archOpen = true;
+let uid = null, unsub = null, signup = false, newColor = 'purple', newType = 'up', archOpen = true;
 
 const $ = s => document.querySelector(s);
 const todayISO = () => { const d=new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; };
 const utc = iso => { const [y,m,d]=iso.split('-').map(Number); return Date.UTC(y,m-1,d); };
 const days = iso => Math.floor((utc(todayISO())-utc(iso))/86400000)+1;
+const daysLeft = iso => Math.floor((utc(iso)-utc(todayISO()))/86400000);
 const fmt = iso => { const [y,m,d]=iso.split('-'); return `${+d}/${+m}/${y}`; };
 const uid4 = () => Date.now().toString(36)+Math.random().toString(36).slice(2,7);
 
@@ -187,26 +196,46 @@ function toast(msg){ const t=$('#toast'); t.textContent=msg; t.classList.add('on
 
 function loadLocal(){ try{ counters = JSON.parse(localStorage.getItem(LS)||'[]'); }catch{ counters=[]; } }
 function saveLocal(){ localStorage.setItem(LS, JSON.stringify(counters)); }
-async function save(){
-  saveLocal(); render();
+async function pushCloud(){
   if(!uid) return;
   try{ await setDoc(doc(db,'counters',uid), { counters, updatedAt: Date.now() }); }
   catch(e){ toast('تعذّرت المزامنة — حُفظ محلياً'); }
 }
+async function save(){ saveLocal(); render(); pushCloud(); }
+
+function autoArchive(){
+  let ch = false;
+  counters.forEach(c=>{ if(c.type==='down' && !c.archived && daysLeft(c.startDate)<=0){ c.archived=true; ch=true; } });
+  return ch;
+}
 
 function cardHTML(c, archived){
-  const n = days(c.startDate);
+  const down = c.type === 'down';
   const col = COLORS.includes(c.color) ? c.color : 'purple';
   const cvars = archived
     ? `--c:var(--gray);--cl:var(--gray-l);--cd:var(--gray-d)`
     : `--c:var(--${col});--cl:var(--${col}-l);--cd:var(--${col}-d)`;
-  const future = n <= 0;
-  const big = future ? Math.abs(n)+1 : n;
-  const lbl = future ? 'يوم للبداية' : 'يوم';
-  const actions = archived
-    ? `<button class="grow" data-act="unarchive" data-id="${c.id}">▶ إرجاع للعمل</button>
-       <button class="btn-icon btn-danger" data-act="delete" data-id="${c.id}" title="حذف">🗑</button>`
-    : `<button class="grow" data-act="reset" data-id="${c.id}">↻ تصفير</button>
+  let big, lbl;
+  if(down){
+    const left = daysLeft(c.startDate);
+    big = left > 0 ? left : 0;
+    lbl = left > 0 ? 'يوم متبقٍ' : 'انتهى';
+  } else {
+    big = days(c.startDate);
+    lbl = 'يوم';
+  }
+  const info = archived
+    ? `<div class="badge">${down ? 'انتهى — ' + fmt(c.startDate) : 'مؤرشف'}</div>`
+    : `<div class="cdate">${down ? '🎯' : '⚑'} ${fmt(c.startDate)}</div>`;
+  let actions;
+  if(archived && down)
+    actions = `<button class="grow" data-act="extend" data-id="${c.id}">⏩ تمديد</button>
+       <button class="btn-icon btn-danger" data-act="delete" data-id="${c.id}" title="حذف">🗑</button>`;
+  else if(archived)
+    actions = `<button class="grow" data-act="unarchive" data-id="${c.id}">▶ إرجاع للعمل</button>
+       <button class="btn-icon btn-danger" data-act="delete" data-id="${c.id}" title="حذف">🗑</button>`;
+  else
+    actions = `<button class="grow" data-act="${down ? 'extend' : 'reset'}" data-id="${c.id}">${down ? '⏩ تمديد' : '↻ تصفير'}</button>
        <button class="btn-icon" data-act="edit" data-id="${c.id}" title="تعديل">✎</button>
        <button class="btn-icon" data-act="archive" data-id="${c.id}" title="أرشفة">⏸</button>
        <button class="btn-icon btn-danger" data-act="delete" data-id="${c.id}" title="حذف">🗑</button>`;
@@ -215,7 +244,7 @@ function cardHTML(c, archived){
       <div class="circle"><b>${big}</b><span>${lbl}</span></div>
       <div class="cinfo">
         <div class="ctitle">${esc(c.title)}</div>
-        ${archived ? `<div class="badge">مؤرشف</div>` : `<div class="cdate">⚑ ${fmt(c.startDate)}</div>`}
+        ${info}
       </div>
     </div>
     <div class="cactions">${actions}</div>
@@ -224,7 +253,12 @@ function cardHTML(c, archived){
 function esc(s){ return String(s).replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m])); }
 
 function render(){
-  const act = counters.filter(c=>!c.archived).sort((a,b)=>utc(a.startDate)-utc(b.startDate));
+  if(autoArchive()){ saveLocal(); pushCloud(); }
+  const act = counters.filter(c=>!c.archived).sort((a,b)=>{
+    const ad = a.type==='down', bd = b.type==='down';
+    if(ad !== bd) return ad ? -1 : 1;
+    return ad ? daysLeft(a.startDate)-daysLeft(b.startDate) : utc(a.startDate)-utc(b.startDate);
+  });
   const arc = counters.filter(c=>c.archived);
   $('#activeGrid').innerHTML = act.map(c=>cardHTML(c,false)).join('');
   $('#emptyState').classList.toggle('hide', act.length>0);
@@ -234,8 +268,10 @@ function render(){
   $('#archArrow').textContent = archOpen ? '▾' : '▸';
   $('#stActive').textContent = act.length;
   $('#stArch').textContent = arc.length;
-  const mx = act.map(c=>days(c.startDate)).filter(n=>n>0);
+  const mx = act.filter(c=>c.type!=='down').map(c=>days(c.startDate)).filter(n=>n>0);
   $('#stMax').textContent = mx.length ? Math.max(...mx)+' يوم' : '—';
+  const nx = act.filter(c=>c.type==='down').map(c=>daysLeft(c.startDate)).filter(n=>n>0);
+  $('#stNext').textContent = nx.length ? Math.min(...nx)+' يوم' : '—';
   $('#subline').textContent = act.length ? `${act.length} عدّاد شغّال` : 'ابدأ عدّادك الأول';
 }
 
@@ -247,6 +283,7 @@ document.addEventListener('click', e=>{
   if(act==='archive'){ c.archived=true; save(); toast('تمّت الأرشفة'); }
   if(act==='unarchive'){ c.archived=false; save(); toast('رجع للعمل'); }
   if(act==='delete') confirmBox(`حذف «${c.title}»؟`, 'لا يمكن التراجع', ()=>{ counters=counters.filter(x=>x.id!==c.id); save(); toast('حُذف'); });
+  if(act==='extend') extendBox(c);
   if(act==='edit') editBox(c);
 });
 
@@ -264,7 +301,7 @@ function editBox(c){
   const o=document.createElement('div'); o.className='overlay';
   o.innerHTML=`<div class="modal"><h3>تعديل العدّاد</h3>
     <div style="margin-bottom:12px"><label>الموضوع</label><input type="text" id="eT" value="${esc(c.title)}"></div>
-    <div><label>تاريخ البداية</label><input type="date" id="eD" value="${c.startDate}"></div>
+    <div><label>${c.type==='down'?'تاريخ الهدف':'تاريخ البداية'}</label><input type="date" id="eD" value="${c.startDate}"></div>
     <label style="margin-top:12px">اللون</label><div class="colors" id="eC"></div>
     <div class="mact"><button class="btn-primary" id="ok">حفظ</button><button id="no">إلغاء</button></div></div>`;
   document.body.appendChild(o);
@@ -282,13 +319,35 @@ function editBox(c){
   o.onclick=e=>{ if(e.target===o) o.remove(); };
 }
 
+function extendBox(c){
+  const o=document.createElement('div'); o.className='overlay';
+  o.innerHTML=`<div class="modal"><h3>تمديد «${esc(c.title)}»</h3>
+    <div><label>تاريخ الهدف الجديد</label><input type="date" id="xD" value="${c.startDate}"></div>
+    <div class="mact"><button class="btn-primary" id="ok">حفظ</button><button id="no">إلغاء</button></div></div>`;
+  document.body.appendChild(o);
+  o.querySelector('#ok').onclick=()=>{
+    const d=o.querySelector('#xD').value;
+    if(!d){ toast('اختر تاريخاً'); return; }
+    if(utc(d) <= utc(todayISO())){ toast('اختر تاريخاً في المستقبل'); return; }
+    c.startDate=d; c.archived=false; save(); o.remove(); toast('تمّ التمديد');
+  };
+  o.querySelector('#no').onclick=()=>o.remove();
+  o.onclick=e=>{ if(e.target===o) o.remove(); };
+}
+
 function paintColors(){
   $('#nColors').innerHTML = COLORS.map(k=>`<div class="sw ${k===newColor?'on':''}" data-c="${k}" style="background:var(--${k})"></div>`).join('');
 }
 $('#nColors').onclick = e=>{ const s=e.target.closest('.sw'); if(!s)return; newColor=s.dataset.c; paintColors(); };
+function paintTypes(){
+  document.querySelectorAll('#nTypes .tbtn').forEach(b=>b.classList.toggle('on', b.dataset.t===newType));
+  $('#nDateLbl').textContent = newType==='down' ? 'تاريخ الهدف' : 'تاريخ البداية';
+}
+$('#nTypes').onclick = e=>{ const b=e.target.closest('.tbtn'); if(!b)return; newType=b.dataset.t; paintTypes(); };
 $('#newBtn').onclick = ()=>{
   $('#addPanel').classList.remove('hide');
   $('#nTitle').value=''; $('#nDate').value=todayISO();
+  newType='up'; paintTypes();
   newColor = COLORS[counters.length % COLORS.length]; paintColors();
   $('#nTitle').focus();
 };
@@ -296,8 +355,9 @@ $('#cancelNew').onclick = ()=> $('#addPanel').classList.add('hide');
 $('#saveNew').onclick = ()=>{
   const t=$('#nTitle').value.trim(), d=$('#nDate').value;
   if(!t){ toast('اكتب موضوع العدّاد'); return; }
-  if(!d){ toast('اختر تاريخ البداية'); return; }
-  counters.push({ id:uid4(), title:t, startDate:d, color:newColor, archived:false, createdAt:Date.now() });
+  if(!d){ toast('اختر التاريخ'); return; }
+  if(newType==='down' && utc(d) <= utc(todayISO())){ toast('العدّاد التنازلي يحتاج تاريخاً في المستقبل'); return; }
+  counters.push({ id:uid4(), title:t, startDate:d, type:newType, color:newColor, archived:false, createdAt:Date.now() });
   $('#addPanel').classList.add('hide'); save(); toast('أُضيف العدّاد');
 };
 $('#archToggle').onclick = ()=>{ archOpen=!archOpen; render(); };

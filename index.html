@@ -54,7 +54,10 @@ header{display:flex;align-items:center;justify-content:space-between;gap:12px;fl
 .card:before{content:'';position:absolute;top:0;right:0;left:0;height:4px;background:var(--c,var(--purple))}
 .crow{display:flex;align-items:center;gap:14px}
 .circle{width:70px;height:70px;flex:none;border-radius:50%;display:flex;flex-direction:column;align-items:center;justify-content:center;background:var(--cl);color:var(--cd)}
-.circle b{font-size:24px;font-weight:700;line-height:1.1}
+.circle.clk{cursor:pointer;position:relative}
+.circle.clk:active{transform:scale(.94)}
+.circle.clk::after{content:'⇄';position:absolute;bottom:-2px;left:50%;transform:translateX(-50%);font-size:10px;opacity:.5}
+.circle b{font-size:22px;font-weight:700;line-height:1.1}
 .circle span{font-size:11px;opacity:.85}
 .cinfo{min-width:0;flex:1}
 .ctitle{font-size:16px;font-weight:600;word-break:break-word}
@@ -189,6 +192,15 @@ const todayISO = () => { const d=new Date(); return `${d.getFullYear()}-${String
 const utc = iso => { const [y,m,d]=iso.split('-').map(Number); return Date.UTC(y,m-1,d); };
 const days = iso => Math.floor((utc(todayISO())-utc(iso))/86400000)+1;
 const daysLeft = iso => Math.floor((utc(iso)-utc(todayISO()))/86400000);
+const UNITS = ['day','week','month','year'];
+const nextUnit = u => UNITS[(UNITS.indexOf(u)+1) % UNITS.length] || 'week';
+function unitVal(nDays, unit){
+  const a = Math.abs(nDays);
+  if(unit==='week')  return { big: Math.max(1,Math.round(a/7)),      lbl:'أسبوع' };
+  if(unit==='month') return { big: Math.max(1,Math.round(a/30.44)),  lbl:'شهر' };
+  if(unit==='year')  return { big: Math.max(1,Math.round(a/365.25)), lbl:'سنة' };
+  return { big:a, lbl:'يوم' };
+}
 const fmt = iso => { const [y,m,d]=iso.split('-'); return `${+d}/${+m}/${y}`; };
 const uid4 = () => Date.now().toString(36)+Math.random().toString(36).slice(2,7);
 
@@ -215,14 +227,15 @@ function cardHTML(c, archived){
   const cvars = archived
     ? `--c:var(--gray);--cl:var(--gray-l);--cd:var(--gray-d)`
     : `--c:var(--${col});--cl:var(--${col}-l);--cd:var(--${col}-d)`;
-  let big, lbl;
+  const unit = c.unit || 'day';
+  let big, lbl, ended=false, raw;
   if(down){
     const left = daysLeft(c.startDate);
-    big = left > 0 ? left : 0;
-    lbl = left > 0 ? 'يوم متبقٍ' : 'انتهى';
+    if(left > 0){ raw=left; const v=unitVal(left,unit); big=v.big; lbl=v.lbl+(unit==='day'?' متبقٍ':''); }
+    else { big=0; lbl='انتهى'; ended=true; }
   } else {
-    big = days(c.startDate);
-    lbl = 'يوم';
+    raw = days(c.startDate);
+    const v = unitVal(raw, unit); big=v.big; lbl=v.lbl;
   }
   const info = archived
     ? `<div class="badge">${down ? 'انتهى — ' + fmt(c.startDate) : 'مؤرشف'}</div>`
@@ -241,7 +254,7 @@ function cardHTML(c, archived){
        <button class="btn-icon btn-danger" data-act="delete" data-id="${c.id}" title="حذف">🗑</button>`;
   return `<div class="card" style="${cvars}">
     <div class="crow">
-      <div class="circle"><b>${big}</b><span>${lbl}</span></div>
+      <div class="circle${(!archived && !ended)?' clk':''}" ${(!archived && !ended)?`data-cyc="${c.id}"`:''}><b>${big}</b><span>${lbl}</span></div>
       <div class="cinfo">
         <div class="ctitle">${esc(c.title)}</div>
         ${info}
@@ -276,6 +289,12 @@ function render(){
 }
 
 document.addEventListener('click', e=>{
+  const cyc = e.target.closest('[data-cyc]');
+  if(cyc){
+    const c = counters.find(x=>x.id===cyc.dataset.cyc);
+    if(c){ c.unit = nextUnit(c.unit||'day'); save(); }
+    return;
+  }
   const b = e.target.closest('[data-act]'); if(!b) return;
   const c = counters.find(x=>x.id===b.dataset.id); if(!c) return;
   const act = b.dataset.act;
@@ -357,7 +376,7 @@ $('#saveNew').onclick = ()=>{
   if(!t){ toast('اكتب موضوع العدّاد'); return; }
   if(!d){ toast('اختر التاريخ'); return; }
   if(newType==='down' && utc(d) <= utc(todayISO())){ toast('العدّاد التنازلي يحتاج تاريخاً في المستقبل'); return; }
-  counters.push({ id:uid4(), title:t, startDate:d, type:newType, color:newColor, archived:false, createdAt:Date.now() });
+  counters.push({ id:uid4(), title:t, startDate:d, type:newType, unit:'day', color:newColor, archived:false, createdAt:Date.now() });
   $('#addPanel').classList.add('hide'); save(); toast('أُضيف العدّاد');
 };
 $('#archToggle').onclick = ()=>{ archOpen=!archOpen; render(); };

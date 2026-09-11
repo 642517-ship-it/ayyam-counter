@@ -34,6 +34,8 @@ button:active{transform:scale(.97)}
 .btn-primary{background:var(--purple);color:#fff;border-color:var(--purple);font-weight:500}
 .btn-primary:hover{background:#453ea0;border-color:#453ea0}
 .btn-icon{width:38px;padding:8px 0;text-align:center}
+#logoutBtn{display:flex;align-items:center;justify-content:center;color:var(--txt2)}
+#logoutBtn:hover{color:var(--danger);border-color:var(--danger)}
 .btn-danger{color:var(--danger)}
 input,select,textarea{font-family:inherit;font-size:15px;width:100%;padding:9px 12px;border:1px solid var(--line);border-radius:10px;background:#fff;color:var(--txt)}
 textarea{resize:vertical;min-height:84px;line-height:1.7}
@@ -94,6 +96,11 @@ header{display:flex;align-items:center;justify-content:space-between;gap:12px;fl
 .detail-circle b{font-size:40px;font-weight:700;line-height:1}
 .detail-circle span{font-size:14px;opacity:.85;margin-top:2px}
 .detail-circle small{position:absolute;bottom:10px;left:50%;transform:translateX(-50%);font-size:11px;opacity:.55}
+.units4{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:10px auto 14px;max-width:420px}
+.u4{background:var(--cl);color:var(--cd);border-radius:14px;padding:12px 4px;text-align:center}
+.u4 b{display:block;font-size:26px;font-weight:700;line-height:1.1}
+.u4 span{font-size:12px;opacity:.85}
+.detail-sub{font-size:13px;color:var(--txt2);margin-bottom:2px}
 .detail-title{font-size:20px;font-weight:600;word-break:break-word}
 .detail-date{font-size:14px;color:var(--txt2);margin-top:4px}
 .detail-panel{background:#fff;border:1px solid var(--line);border-radius:var(--radius);padding:16px;margin-bottom:16px}
@@ -160,7 +167,9 @@ header{display:flex;align-items:center;justify-content:space-between;gap:12px;fl
     </div>
     <div class="hactions">
       <button id="installBtn" class="hide">📲 تثبيت</button>
-      <button class="btn-icon" id="logoutBtn" title="خروج">⏻</button>
+      <button class="btn-icon" id="logoutBtn" title="تسجيل الخروج" aria-label="تسجيل الخروج">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+      </button>
     </div>
   </header>
 
@@ -248,6 +257,15 @@ const utc = iso => { const [y,m,d]=iso.split('-').map(Number); return Date.UTC(y
 const days = iso => Math.floor((utc(todayISO())-utc(iso))/86400000)+1;
 const daysLeft = iso => Math.floor((utc(iso)-utc(todayISO()))/86400000);
 const nextUnit = u => UNITS[(UNITS.indexOf(u)+1) % UNITS.length] || 'week';
+function completedUnits(nDays){
+  const a = Math.abs(nDays);
+  return {
+    day:   a,
+    week:  Math.floor(a/7),
+    month: Math.floor(a/30.44),
+    year:  Math.floor(a/365.25)
+  };
+}
 function unitVal(nDays, unit){
   const a = Math.abs(nDays);
   if(unit==='week')  return { big: Math.max(1,Math.round(a/7)),      lbl:'أسبوع' };
@@ -323,19 +341,20 @@ function render(){
 }
 
 function listCardHTML(c){
-  const v = counterView(c);
+  const down = c.type==='down';
+  let big, lbl;
+  if(down){ const left=daysLeft(c.startDate); if(left>0){ big=left; lbl='يوم متبقٍ'; } else { big=0; lbl='انتهى'; } }
+  else { big=days(c.startDate); lbl='يوم'; }
   const col = COLORS.includes(c.color) ? c.color : 'purple';
   const cvars = c.archived
     ? `--c:var(--gray);--cl:var(--gray-l);--cd:var(--gray-d)`
     : `--c:var(--${col});--cl:var(--${col}-l);--cd:var(--${col}-d)`;
   const info = c.archived
-    ? `<div class="badge">${v.down ? 'انتهى — ' + fmt(c.startDate) : 'مؤرشف'}</div>`
-    : `<div class="cdate">${v.down ? '🎯' : '⚑'} ${fmt(c.startDate)}</div>`;
-  const clk = (!c.archived && !v.ended) ? ' clk' : '';
-  const cyc = (!c.archived && !v.ended) ? `data-cyc="${c.id}"` : '';
+    ? `<div class="badge">${down ? 'انتهى — ' + fmt(c.startDate) : 'مؤرشف'}</div>`
+    : `<div class="cdate">${down ? '🎯' : '⚑'} ${fmt(c.startDate)}</div>`;
   return `<div class="card" style="${cvars}" data-open="${c.id}">
     <div class="crow">
-      <div class="circle${clk}" ${cyc}><b>${v.big}</b><span>${v.lbl}</span></div>
+      <div class="circle"><b>${big}</b><span>${lbl}</span></div>
       <div class="cinfo">
         <div class="ctitle">${esc(c.title)}</div>
         ${info}
@@ -369,8 +388,17 @@ function renderDetail(){
     ? `--c:var(--gray);--cl:var(--gray-l);--cd:var(--gray-d)`
     : `--c:var(--${col});--cl:var(--${col}-l);--cd:var(--${col}-d)`;
   const dateLbl = v.down ? 'تاريخ الهدف' : 'تاريخ البداية';
-  const canCycle = !v.ended;
-  const cycAttr = canCycle ? `data-dcyc="${c.id}"` : '';
+  const rawN = v.down ? daysLeft(c.startDate) : days(c.startDate);
+  const cu = completedUnits(rawN);
+  const subTxt = v.down ? (v.ended ? '' : 'المتبقّي حتى الهدف') : 'مضى منذ البداية';
+  const units4 = v.ended ? '' : `
+    <div class="detail-sub">${subTxt}</div>
+    <div class="units4">
+      <div class="u4"><b>${cu.day}</b><span>يوم</span></div>
+      <div class="u4"><b>${cu.week}</b><span>أسبوع</span></div>
+      <div class="u4"><b>${cu.month}</b><span>شهر</span></div>
+      <div class="u4"><b>${cu.year}</b><span>سنة</span></div>
+    </div>`;
   let actions;
   if(c.archived && v.down)
     actions = `<button class="act-full" data-act="extend" data-id="${c.id}">⏩ تمديد الهدف</button>
@@ -386,10 +414,7 @@ function renderDetail(){
   const note = (c.note||'').trim();
   $('#detailBody').innerHTML = `
     <div class="detail-hero" style="${cvars}">
-      <div class="detail-circle" ${cycAttr}>
-        <b>${v.big}</b><span>${v.lbl}</span>
-        ${canCycle?'<small>اضغط لتبديل الوحدة ⇄</small>':''}
-      </div>
+      ${v.ended ? `<div class="detail-circle"><b>—</b><span>انتهى</span></div>` : units4}
       <div class="detail-title">${esc(c.title)}</div>
       <div class="detail-date">${v.down?'🎯':'⚑'} ${dateLbl}: ${fmt(c.startDate)}</div>
     </div>
@@ -409,12 +434,6 @@ $('#cardActive').onclick = ()=>{ listMode='active'; go('list'); renderList(); };
 $('#cardArch').onclick = ()=>{ listMode='arch'; go('list'); renderList(); };
 
 document.addEventListener('click', e=>{
-  // cycle unit from list circle
-  const cyc = e.target.closest('[data-cyc]');
-  if(cyc){ e.stopPropagation(); const c=counters.find(x=>x.id===cyc.dataset.cyc); if(c){ c.unit=nextUnit(c.unit||'day'); save(); } return; }
-  // cycle unit from detail circle
-  const dcyc = e.target.closest('[data-dcyc]');
-  if(dcyc){ const c=counters.find(x=>x.id===dcyc.dataset.dcyc); if(c){ c.unit=nextUnit(c.unit||'day'); save(); } return; }
   // open detail
   const op = e.target.closest('[data-open]');
   if(op){ currentId=op.dataset.open; go('detail'); renderDetail(); return; }
